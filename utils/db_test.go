@@ -1,34 +1,49 @@
 package utils
 
 import (
-    "context"
-    "testing"
-    "github.com/jackc/pgx/v4/pgxpool"
-    "github.com/stretchr/testify/assert"
+	"database/sql"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	_ "github.com/go-sql-driver/mysql" // Import the MySQL driver
 )
 
-// TestConnectDB tests the database connection
+// TestConnectDB tests the database connection with an invalid connection string
 func TestConnectDB(t *testing.T) {
-    // Mocking the database connection is not straightforward, so we will check for error handling
-    dbURL := "postgres://invalid:invalid@localhost:5432/invalid_db"
-    conn, err := pgxpool.Connect(context.Background(), dbURL)
+	// Invalid MySQL connection string
+	dbURL := "invalid_user:invalid_pass@tcp(localhost:3306)/invalid_db"
+	db, err := sql.Open("mysql", dbURL)
 
-    // Assert that the connection failed because of the invalid connection string
-    assert.NotNil(t, err, "Expected error for invalid database connection")
-    assert.Nil(t, conn, "Expected nil connection for invalid database")
+	// Ensure that sql.Open does not return an error for invalid strings
+	assert.Nil(t, err, "Expected no error from sql.Open for invalid connection string")
+	assert.NotNil(t, db, "Expected a non-nil DB object from sql.Open")
+
+	// Test Ping() to validate the connection
+	if db != nil {
+		err = db.Ping()
+		assert.NotNil(t, err, "Expected error when pinging with an invalid connection")
+		db.Close()
+	}
 }
 
-// TestConnectDBSuccess tests a successful connection (adjust this for real DB)
+
+// TestConnectDBSuccess tests a successful connection to a MySQL database
 func TestConnectDBSuccess(t *testing.T) {
-    // Assuming a valid connection string is used, the test should pass when connected to a real database.
-    // Example below assumes you have a local PostgreSQL instance running.
-    dbURL := "postgres://username:password@localhost:5432/test_db"
-    conn, err := pgxpool.Connect(context.Background(), dbURL)
+	// Valid MySQL connection string
+	dbURL := "root:0000@tcp(localhost:3306)/file_sharing_db"
+	db, err := sql.Open("mysql", dbURL)
 
-    assert.Nil(t, err, "Expected no error for valid database connection")
-    assert.NotNil(t, conn, "Expected valid database connection")
+	// Assert that the connection is successful
+	assert.Nil(t, err, "Expected no error for valid database connection")
+	assert.NotNil(t, db, "Expected valid database connection")
 
-    if conn != nil {
-        conn.Close()
-    }
+	// Test if the connection is alive
+	if db != nil {
+		err = db.Ping()
+		assert.Nil(t, err, "Expected no error when pinging the database")
+
+		// Close the connection
+		err = db.Close()
+		assert.Nil(t, err, "Expected no error when closing the database connection")
+	}
 }

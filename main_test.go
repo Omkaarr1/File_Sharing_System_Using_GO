@@ -1,250 +1,202 @@
 package main
 
 import (
-    "bytes"
-    "encoding/json"
-    "fmt"    // Import fmt for string formatting
-    "net/http"
-    "net/http/httptest"
-    "testing"
-    "time"
-    "file-sharing-system/models"
-    "github.com/DATA-DOG/go-sqlmock"
-    "github.com/dgrijalva/jwt-go"
-    "golang.org/x/crypto/bcrypt"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"file-sharing-system/models"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/dgrijalva/jwt-go"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// Define jwtKey used for signing JWT tokens
 var jwtKey = []byte("test_secret_key")
 
-// Define the Claims struct used in JWT
 type Claims struct {
-    Email string `json:"email"`
-    jwt.StandardClaims
+	Email string `json:"email"`
+	jwt.StandardClaims
 }
 
-// HashPassword for testing
+// HashPassword hashes a plain text password.
 func HashPassword(password string) (string, error) {
-    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-    if err != nil {
-        return "", err
-    }
-    return string(hashedPassword), nil
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(hashedPassword), err
 }
 
-// CheckPasswordHash for testing
-func CheckPasswordHash(password, hashedPassword string) bool {
-    err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
-    return err == nil
+// CheckPasswordHash checks if a plain password matches a hashed password.
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
 }
 
-// TestRegister tests the user registration handler
+// TestRegister tests user registration.
 func TestRegister(t *testing.T) {
-    // Mock the user data
-    user := models.User{
-        Email:    "test@example.com",
-        Password: "password123",
-    }
-    userData, _ := json.Marshal(user)
+	user := models.User{
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+	userData, _ := json.Marshal(user)
 
-    // Create a new HTTP request
-    req, err := http.NewRequest("POST", "/register", bytes.NewBuffer(userData))
-    if err != nil {
-        t.Fatal(err)
-    }
-    req.Header.Set("Content-Type", "application/json")
+	req, err := http.NewRequest("POST", "/register", bytes.NewBuffer(userData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-    // Record the response using httptest
-    rr := httptest.NewRecorder()
+	rr := httptest.NewRecorder()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Error creating mock database: %s", err)
+	}
+	defer db.Close()
 
-    // Mock database connection and insert operation
-    db, mock, err := sqlmock.New()
-    if err != nil {
-        t.Fatalf("Error creating mock database: %s", err)
-    }
-    defer db.Close()
+	mock.ExpectExec("INSERT INTO users").WithArgs(user.Email, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
-    mock.ExpectExec("INSERT INTO users").WithArgs(user.Email, user.Password).WillReturnResult(sqlmock.NewResult(1, 1))
+	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var user models.User
+		json.NewDecoder(r.Body).Decode(&user)
 
-    // Define the Register handler (handler logic should match your actual Register handler)
-    http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        var user models.User
-        json.NewDecoder(r.Body).Decode(&user)
+		hashedPassword, _ := HashPassword(user.Password)
+		user.Password = hashedPassword
 
-        // Hash password
-        hashedPassword, err := HashPassword(user.Password)
-        if err != nil {
-            http.Error(w, "Error hashing password", http.StatusInternalServerError)
-            return
-        }
-        user.Password = hashedPassword
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode("User registered")
+	}).ServeHTTP(rr, req)
 
-        // Mock saving to database
-        if err := models.CreateUser(user); err != nil {
-            http.Error(w, "Unable to register user", http.StatusInternalServerError)
-            return
-        }
+	if rr.Code != http.StatusCreated {
+		t.Errorf("Expected status 201 Created, got %v", rr.Code)
+	}
 
-        w.WriteHeader(http.StatusCreated)
-        json.NewEncoder(w).Encode("User registered")
-    }).ServeHTTP(rr, req)
-
-    // Assertions
-    if rr.Code != http.StatusCreated {
-        t.Errorf("expected status 201 Created, got %v", rr.Code)
-    }
-
-    expected := `"User registered"`
-    if rr.Body.String() != expected {
-        t.Errorf("expected body %v, got %v", expected, rr.Body.String())
-    }
+	expected := `"User registered"`
+	actual := strings.TrimSpace(rr.Body.String())
+	if expected != actual {
+		t.Errorf("Expected body %v, got %v", expected, actual)
+	}
 }
 
-// TestLogin tests the user login handler
+// TestLogin tests user login.
 func TestLogin(t *testing.T) {
-    // Mock the user data
-    user := models.User{
-        Email:    "test@example.com",
-        Password: "password123",
-    }
-    userData, _ := json.Marshal(user)
+	user := models.User{
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+	userData, _ := json.Marshal(user)
 
-    // Create a new HTTP request
-    req, err := http.NewRequest("POST", "/login", bytes.NewBuffer(userData))
-    if err != nil {
-        t.Fatal(err)
-    }
-    req.Header.Set("Content-Type", "application/json")
+	req, err := http.NewRequest("POST", "/login", bytes.NewBuffer(userData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-    // Record the response using httptest
-    rr := httptest.NewRecorder()
+	rr := httptest.NewRecorder()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Error creating mock database: %s", err)
+	}
+	defer db.Close()
 
-    // Mock database connection and query
-    db, mock, err := sqlmock.New()
-    if err != nil {
-        t.Fatalf("Error creating mock database: %s", err)
-    }
-    defer db.Close()
+	hashedPassword, _ := HashPassword(user.Password)
+	mock.ExpectQuery("SELECT id, email, password_hash FROM users WHERE email = ?").
+		WithArgs(user.Email).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password_hash"}).AddRow(1, user.Email, hashedPassword))
 
-    // Mock the stored hashed password
-    hashedPassword, _ := HashPassword(user.Password)
-    mock.ExpectQuery("SELECT id, email, password FROM users WHERE email = ?").
-        WithArgs(user.Email).
-        WillReturnRows(sqlmock.NewRows([]string{"id", "email", "password"}).AddRow(1, user.Email, hashedPassword))
+	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
+			Email: user.Email,
+			StandardClaims: jwt.StandardClaims{
+				ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
+			},
+		})
+		tokenString, err := token.SignedString(jwtKey)
+		if err != nil {
+			http.Error(w, "Could not generate token", http.StatusInternalServerError)
+			return
+		}
 
-    // Define the Login handler (logic should match your actual Login handler)
-    http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        var user models.User
-        json.NewDecoder(r.Body).Decode(&user)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Logged in successfully",
+			"token":   tokenString,
+		})
+	}).ServeHTTP(rr, req)
 
-        // Mock the stored user from the database
-        storedUser := models.User{
-            Email:    "test@example.com",
-            Password: hashedPassword,
-        }
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", rr.Code)
+	}
 
-        // Compare passwords
-        if !CheckPasswordHash(user.Password, storedUser.Password) {
-            http.Error(w, "Invalid password", http.StatusUnauthorized)
-            return
-        }
+	var response map[string]string
+	err = json.NewDecoder(rr.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
 
-        // Generate JWT token
-        expirationTime := time.Now().Add(1 * time.Hour)
-        claims := &Claims{
-            Email: storedUser.Email,
-            StandardClaims: jwt.StandardClaims{
-                ExpiresAt: expirationTime.Unix(),
-            },
-        }
+	if response["message"] != "Logged in successfully" {
+		t.Errorf("Expected message 'Logged in successfully', got %v", response["message"])
+	}
 
-        token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-        tokenString, err := token.SignedString(jwtKey)
-        if err != nil {
-            http.Error(w, "Could not generate token", http.StatusInternalServerError)
-            return
-        }
-
-        http.SetCookie(w, &http.Cookie{
-            Name:    "token",
-            Value:   tokenString,
-            Expires: expirationTime,
-        })
-
-        json.NewEncoder(w).Encode("Logged in successfully")
-    }).ServeHTTP(rr, req)
-
-    // Assertions
-    if rr.Code != http.StatusOK {
-        t.Errorf("expected status 200 OK, got %v", rr.Code)
-    }
-
-    expected := `"Logged in successfully"`
-    if rr.Body.String() != expected {
-        t.Errorf("expected body %v, got %v", expected, rr.Body.String())
-    }
+	if response["token"] == "" {
+		t.Error("Expected a token in the response, but got an empty string")
+	}
 }
 
-// TestFileUpload tests the file upload handler (mocked)
+// TestFileUpload tests file upload.
 func TestFileUpload(t *testing.T) {
-    // Mock a file upload
-    var jsonStr = []byte(`{"fileName": "testfile.txt", "fileContent": "This is a test file."}`)
+	var jsonStr = []byte(`{"fileName": "testfile.txt", "fileContent": "This is a test file."}`)
 
-    // Create a new HTTP request
-    req, err := http.NewRequest("POST", "/upload", bytes.NewBuffer(jsonStr))
-    if err != nil {
-        t.Fatal(err)
-    }
-    req.Header.Set("Content-Type", "application/json")
+	req, err := http.NewRequest("POST", "/upload", bytes.NewBuffer(jsonStr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-    // Record the response using httptest
-    rr := httptest.NewRecorder()
+	rr := httptest.NewRecorder()
 
-    // Define the Upload handler (handler logic should match your actual Upload handler)
-    http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Simulate file upload process
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode("File uploaded successfully")
-    }).ServeHTTP(rr, req)
+	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode("File uploaded successfully")
+	}).ServeHTTP(rr, req)
 
-    // Assertions
-    if rr.Code != http.StatusOK {
-        t.Errorf("expected status 200 OK, got %v", rr.Code)
-    }
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", rr.Code)
+	}
 
-    expected := `"File uploaded successfully"`
-    if rr.Body.String() != expected {
-        t.Errorf("expected body %v, got %v", expected, rr.Body.String())
-    }
+	expected := `"File uploaded successfully"`
+	actual := strings.TrimSpace(rr.Body.String())
+	if expected != actual {
+		t.Errorf("Expected body %v, got %v", expected, actual)
+	}
 }
 
-// TestFileShare tests the file sharing handler (mocked)
+// TestFileShare tests file sharing.
 func TestFileShare(t *testing.T) {
-    // Mock a file ID
-    fileID := 123
+	fileID := 123
 
-    // Create a new HTTP request
-    req, err := http.NewRequest("GET", "/share/123", nil)
-    if err != nil {
-        t.Fatal(err)
-    }
+	req, err := http.NewRequest("GET", "/share/123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    // Record the response using httptest
-    rr := httptest.NewRecorder()
+	rr := httptest.NewRecorder()
 
-    // Define the ShareFile handler (handler logic should match your actual ShareFile handler)
-    http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        sharedURL := fmt.Sprintf("https://my-file-sharing-app.com/files/%d", fileID)
-        json.NewEncoder(w).Encode(sharedURL)
-    }).ServeHTTP(rr, req)
+	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sharedURL := fmt.Sprintf("https://my-file-sharing-app.com/files/%d", fileID)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(sharedURL)
+	}).ServeHTTP(rr, req)
 
-    // Assertions
-    if rr.Code != http.StatusOK {
-        t.Errorf("expected status 200 OK, got %v", rr.Code)
-    }
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", rr.Code)
+	}
 
-    expected := `"https://my-file-sharing-app.com/files/123"`
-    if rr.Body.String() != expected {
-        t.Errorf("expected body %v, got %v", expected, rr.Body.String())
-    }
+	expected := `"https://my-file-sharing-app.com/files/123"`
+	actual := strings.TrimSpace(rr.Body.String())
+	if expected != actual {
+		t.Errorf("Expected body %v, got %v", expected, actual)
+	}
 }

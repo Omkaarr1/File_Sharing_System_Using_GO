@@ -1,29 +1,35 @@
 package models
 
 import (
-    "context"
-    "file-sharing-system/utils"
+	"file-sharing-system/utils"
 )
 
 type User struct {
-    ID       int    `json:"id"`
-    Email    string `json:"email"`
-    Password string `json:"password"`
+	ID       int    `json:"id"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
+// CreateUser inserts a new user into the database
 func CreateUser(user User) error {
-    db := utils.ConnectDB()
-    defer db.Close()
+	db := utils.ConnectDB() // Connect to the database
+	defer db.Close()        // Ensure the connection is closed after the operation
 
-    _, err := db.Exec(context.Background(), "INSERT INTO users (email, password) VALUES ($1, $2)", user.Email, user.Password)
-    return err
+	// MySQL query to insert a new user
+	query := "INSERT INTO users (email, password_hash) VALUES (?, ?)"
+	_, err := db.Exec(query, user.Email, user.Password)
+	return err
 }
 
+// GetUserByEmail retrieves a user by their email
 func GetUserByEmail(email string) (User, error) {
-    db := utils.ConnectDB()
-    defer db.Close()
+	db := utils.ConnectDB() // Connect to the database
+	defer db.Close()        // Ensure the connection is closed after the operation
 
-    var user User
-    err := db.QueryRow(context.Background(), "SELECT id, email, password FROM users WHERE email = $1", email).Scan(&user.ID, &user.Email, &user.Password)
-    return user, err
+	// MySQL query to get a user by email
+	query := "SELECT id, email, password_hash FROM users WHERE email = ?"
+
+	var user User
+	err := db.QueryRow(query, email).Scan(&user.ID, &user.Email, &user.Password)
+	return user, err
 }
